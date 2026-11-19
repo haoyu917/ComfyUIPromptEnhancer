@@ -868,6 +868,9 @@ class BuffAIDirectorEnhancer:
 
     @staticmethod
     def _endpoint_label(config: Mapping[str, Any]) -> str:
+        if config.get("api_provider") not in API_PROVIDERS:
+            # Offline experiment backends (for example the Claude Code CLI) make no HTTP call.
+            return f"{config.get('api_provider')} (no HTTP endpoint)"
         if config.get("api_provider") == "Anthropic":
             return sanitize_url(str(config["api_base_url"]).rstrip("/") + "/v1/messages")
         return sanitize_url(OpenAICompatibleClient.build_chat_url(config["api_base_url"]))
