@@ -66,3 +66,6 @@ comfy.settings.json
 
 # Synthetic records from experiments/run_sweep.py --dry-run
 /experiments/dry_run_logs/
+
+# Generated evaluation reports
+/research_reports/
