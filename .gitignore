@@ -63,3 +63,6 @@ comfy.settings.json
 
 # Local research run logs (may contain prompts and outputs)
 /research_logs/
+
+# Synthetic records from experiments/run_sweep.py --dry-run
+/experiments/dry_run_logs/
