@@ -585,7 +585,11 @@ class BuffAIDirectorEnhancer:
                 inputs["negative_constraints"] = "\n".join(part for part in (current, config["must_avoid"]) if part)
 
             module_states = resolve_module_states(config["director_preset"], inputs)
-            runtime = resolve_module_runtime(module_states, inputs)
+            module_inputs = inputs
+            if config["audio_policy"] == "SFX Only":
+                # Keep withheld speech out of module context too (see _build_user_prompt).
+                module_inputs = {k: v for k, v in inputs.items() if k not in {"dialogue_text", "offscreen_dialogue_text"}}
+            runtime = resolve_module_runtime(module_states, module_inputs)
             module_context = build_module_context(runtime)
             module_schema = build_dynamic_schema(module_states, config["language"])
             report = runtime_report(runtime)
@@ -936,10 +940,28 @@ class BuffAIDirectorEnhancer:
         dialogue_entries: list[dict[str, Any]],
         offscreen_dialogue_entries: list[dict[str, Any]],
     ) -> str:
+        # Under SFX Only no line may be spoken. Listing the user's lines as
+        # verbatim locks to assign would contradict the system prompt's ban on
+        # speech, so they are withheld from the model for this policy.
+        speech_withheld = config.get("audio_policy") == "SFX Only" and bool(
+            dialogue_entries
+            or offscreen_dialogue_entries
+            or str(inputs.get("dialogue_text", "") or "").strip()
+            or str(inputs.get("offscreen_dialogue_text", "") or "").strip()
+        )
+        if speech_withheld:
+            dialogue_entries = []
+            offscreen_dialogue_entries = []
+        withheld_note = (
+            "\n- Any user-supplied dialogue is intentionally withheld: this request is sound effects only, "
+            "so no line may be spoken or lip-synced."
+            if speech_withheld
+            else ""
+        )
         exact = {
             "character_names": canonicalize_name_list(inputs.get("character_names", "")),
-            "dialogue_text": str(inputs.get("dialogue_text", "") or "").strip(),
-            "offscreen_dialogue_text": str(inputs.get("offscreen_dialogue_text", "") or "").strip(),
+            "dialogue_text": "" if speech_withheld else str(inputs.get("dialogue_text", "") or "").strip(),
+            "offscreen_dialogue_text": "" if speech_withheld else str(inputs.get("offscreen_dialogue_text", "") or "").strip(),
             "keywords": str(inputs.get("keywords", "") or "").strip(),
         }
         global_context = {
@@ -1009,7 +1031,7 @@ EXACT OFF-SCREEN DIALOGUE ENTRIES — these are the only allowed spoken off-scre
 AUDIO POLICY:
 - Policy: {config.get('audio_policy')}
 - Strict speech lock: {config.get('strict_speech_lock')}
-- The AI may improve delivery, breathing, timing, facial reaction and performance direction, but must not invent spoken words outside the allowed lists.
+- The AI may improve delivery, breathing, timing, facial reaction and performance direction, but must not invent spoken words outside the allowed lists.{withheld_note}
 
 EXPLICIT SHOT LOCKS:
 {json.dumps(shot_lock_payload, ensure_ascii=False, indent=2)}

@@ -799,7 +799,7 @@ MiniMax H3 会把视频和声音一起生成，所以“声音描述”有可能
 
 - `Strict Dialogue Only`：只允许 `dialogue_text` 中的角色台词。
 - `Dialogue + Exact Offscreen`：允许角色台词 + `offscreen_dialogue_text` 中明确填写的画外台词。短剧推荐。
-- `SFX Only`：禁止所有人类语言，只保留环境声、脚步、衣料、碰撞、风雨等。
+- `SFX Only`：禁止所有人类语言，只保留环境声、脚步、衣料、碰撞、风雨等。此时即使填写了 `dialogue_text` 或 `offscreen_dialogue_text`，台词也不会发送给模型。
 - `Full Auto Audio`：允许 AI 自由设计语言和声音，风险最高。
 
 ### strict_speech_lock

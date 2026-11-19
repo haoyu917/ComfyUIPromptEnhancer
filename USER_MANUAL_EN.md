@@ -617,7 +617,7 @@ MiniMax H3 generates video and native audio together. A loose sound description 
 
 - `Strict Dialogue Only`: only lines in `dialogue_text` may be spoken.
 - `Dialogue + Exact Offscreen`: allows `dialogue_text` plus exact lines in `offscreen_dialogue_text`. Recommended for short drama.
-- `SFX Only`: no human language; keep only ambience, footsteps, cloth, impacts, weather, etc.
+- `SFX Only`: no human language; keep only ambience, footsteps, cloth, impacts, weather, etc. Lines in `dialogue_text` or `offscreen_dialogue_text` are not sent to the model under this policy.
 - `Full Auto Audio`: AI may freely design speech and sound. Highest risk of extra dialogue.
 
 ### strict_speech_lock

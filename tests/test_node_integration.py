@@ -426,3 +426,33 @@ def test_input_types_put_output_language_and_lora_keywords_in_common_ui():
     assert optional["language"][0] == ["中文", "English"]
     assert optional["language"][1]["default"] == "中文"
     assert "LoRA" in optional["keywords"][1]["tooltip"]
+
+
+def test_sfx_only_withholds_dialogue_lines_instead_of_asking_to_assign_them():
+    line = "孩子们，快回来吧。"
+    node = MockNode([_minimal_response(1)])
+    node.generate(
+        **_base_kwargs(),
+        audio_policy="SFX Only",
+        dialogue_text=f"@老人｜{line}",
+        offscreen_dialogue_text="门外｜有人吗？",
+    )
+    call = node.fake_client.calls[0]
+    assert "SFX ONLY" in call["system"]
+    assert line not in call["user"] and "有人吗" not in call["user"]
+    assert "intentionally withheld" in call["user"]
+
+
+def test_other_audio_policies_still_send_dialogue_lines():
+    line = "你怕什么？"
+    node = MockNode([_minimal_response(1)])
+    node.generate(**_base_kwargs(), audio_policy="Strict Dialogue Only", dialogue_text=f"@铁角妖王｜{line}")
+    user = node.fake_client.calls[0]["user"]
+    assert line in user
+    assert "intentionally withheld" not in user
+
+
+def test_sfx_only_without_dialogue_adds_no_withheld_note():
+    node = MockNode([_minimal_response(1)])
+    node.generate(**_base_kwargs(), audio_policy="SFX Only")
+    assert "intentionally withheld" not in node.fake_client.calls[0]["user"]
