@@ -259,13 +259,6 @@ class BuffAIDirectorEnhancer:
                 ),
                 "must_keep": ("STRING", {"multiline": True, "default": "", "tooltip": "可选。绝对必须保持的内容，例如：人物服装不变；石桌始终在女妖身后。"}),
                 "must_avoid": ("STRING", {"multiline": True, "default": "", "tooltip": "可选。绝对不能出现的内容，例如：不要亲吻；不要环绕运镜。"}),
-                "api_provider": (
-                    list(API_PROVIDERS),
-                    {
-                        "default": "OpenAI-compatible",
-                        "tooltip": "API 类型。OpenAI-compatible：中转站或任何 /v1/chat/completions 接口；Anthropic：Claude 官方 API（需要 pip install anthropic，地址可留空，默认 https://api.anthropic.com）。",
-                    },
-                ),
                 "api_base_url": ("STRING", {"multiline": False, "default": "", "tooltip": "主机必须加入本机 BUFF_AI_TRUSTED_API_HOSTS；远程地址使用 HTTPS，本机回环可用 HTTP。选 Anthropic 时可留空。"}),
                 "api_model": ("STRING", {"multiline": False, "default": "", "tooltip": "必填。用于导演分析和完善 Prompt 的语言模型 ID，可自由填写，例如中转站的模型 ID，或 Claude 的 claude-opus-5-5、claude-sonnet-5-5。也可设置 BUFF_AI_API_MODEL 环境变量。"}),
                 "api_key_env_var": (
@@ -329,14 +322,6 @@ class BuffAIDirectorEnhancer:
 
                 "temperature": ("FLOAT", {"default": 0.6, "min": 0.0, "max": 2.0, "step": 0.05, "tooltip": "推荐 0.3–0.6 获得更稳定的结构化输出。"}),
                 "timeout_seconds": ("INT", {"default": 90, "min": 10, "max": 300, "step": 5, "tooltip": "单次 API 请求超时秒数。"}),
-                "research_log": (
-                    list(RESEARCH_LOG_LEVELS),
-                    {
-                        "default": "Off",
-                        "tooltip": "研究记录。Off=不记录；Metrics only=记录配置、模块状态、耗时、token 用量和结果，剧情只存哈希；Full text=另外保存剧情原文和生成结果。写入位置由本机环境变量 BUFF_AI_RESEARCH_LOG_DIR 决定，从不记录 API Key。",
-                    },
-                ),
-                "research_tag": ("STRING", {"multiline": False, "default": "", "tooltip": "可选。研究记录标签，例如实验编号或基准剧情编号，便于之后分组分析。"}),
 
                 # ---- Old fields remain for workflow compatibility, but the V3.1 JS hides them. ----
                 "character": ("STRING", {"multiline": True, "default": "", "tooltip": "旧版兼容字段。V3.1 新工作流通常无需填写。"}),
@@ -365,6 +350,29 @@ class BuffAIDirectorEnhancer:
                     },
                 ),
             )
+
+        # Inputs added after V3.2.1 go last: ComfyUI stores widget values by
+        # position, so inserting earlier would shift every value in older
+        # saved workflows.
+        optional.update(
+            {
+                "api_provider": (
+                    list(API_PROVIDERS),
+                    {
+                        "default": "OpenAI-compatible",
+                        "tooltip": "API 类型。OpenAI-compatible：中转站或任何 /v1/chat/completions 接口；Anthropic：Claude 官方 API（需要 pip install anthropic，地址可留空，默认 https://api.anthropic.com）。",
+                    },
+                ),
+                "research_log": (
+                    list(RESEARCH_LOG_LEVELS),
+                    {
+                        "default": "Off",
+                        "tooltip": "研究记录。Off=不记录；Metrics only=记录配置、模块状态、耗时、token 用量和结果，剧情只存哈希；Full text=另外保存剧情原文和生成结果。写入位置由本机环境变量 BUFF_AI_RESEARCH_LOG_DIR 决定，从不记录 API Key。",
+                    },
+                ),
+                "research_tag": ("STRING", {"multiline": False, "default": "", "tooltip": "可选。研究记录标签，例如实验编号或基准剧情编号，便于之后分组分析。"}),
+            }
+        )
 
         return {"required": required, "optional": optional}
 

@@ -53,13 +53,15 @@ class BuffAIAPITest:
                 ),
             },
             "optional": {
-                "api_provider": (
-                    list(API_PROVIDERS),
-                    {"default": "OpenAI-compatible", "tooltip": "OpenAI-compatible：中转站；Anthropic：Claude 官方 API（地址可留空）。"},
-                ),
                 "timeout_seconds": (
                     "INT",
                     {"default": 20, "min": 5, "max": 120, "step": 5},
+                ),
+                # Added after V3.2.1; kept last so older saved workflows keep
+                # their positional widget values.
+                "api_provider": (
+                    list(API_PROVIDERS),
+                    {"default": "OpenAI-compatible", "tooltip": "OpenAI-compatible：中转站；Anthropic：Claude 官方 API（地址可留空）。"},
                 ),
             },
         }
