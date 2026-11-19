@@ -169,6 +169,9 @@ class OpenAICompatibleClient:
         self.timeout_seconds = int(timeout_seconds)
         self.transport = transport or self._urllib_transport
         self.trusted_hosts = trusted_hosts
+        # Token usage reported by the endpoint for the most recent chat() call,
+        # or None when the endpoint does not report it.
+        self.last_usage: Optional[Dict[str, Any]] = None
 
     @staticmethod
     def build_chat_url(base_url: str) -> str:
@@ -203,6 +206,7 @@ class OpenAICompatibleClient:
         if prefer_json_mode:
             payload["response_format"] = {"type": "json_object"}
 
+        self.last_usage = None
         first_payload = dict(payload)
         try:
             data = self._request(first_payload)
@@ -219,6 +223,8 @@ class OpenAICompatibleClient:
             retry_payload.pop("response_format", None)
             data = self._request(retry_payload)
 
+        usage = data.get("usage") if isinstance(data, dict) else None
+        self.last_usage = dict(usage) if isinstance(usage, dict) else None
         return self._extract_content(data)
 
     def _request(self, payload: Dict[str, Any]) -> Dict[str, Any]:

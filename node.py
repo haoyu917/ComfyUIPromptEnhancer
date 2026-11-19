@@ -50,6 +50,7 @@ try:
     from .renderer import render_director_summary, render_master_prompt, render_shot_prompts
     from .shot_planner import ShotPlanError, ShotPlanLock, parse_shot_plan
     from .storyboard import normalize_storyboard
+    from .run_logger import RESEARCH_LOG_LEVELS, RunRecorder
 except ImportError:  # Standalone test fallback.
     from api_client import (
         APIClientError,
@@ -90,6 +91,7 @@ except ImportError:  # Standalone test fallback.
     from renderer import render_director_summary, render_master_prompt, render_shot_prompts
     from shot_planner import ShotPlanError, ShotPlanLock, parse_shot_plan
     from storyboard import normalize_storyboard
+    from run_logger import RESEARCH_LOG_LEVELS, RunRecorder
 
 
 class ContainsAnyDict(dict):
@@ -296,6 +298,14 @@ class BuffAIDirectorEnhancer:
 
                 "temperature": ("FLOAT", {"default": 0.6, "min": 0.0, "max": 2.0, "step": 0.05, "tooltip": "推荐 0.3–0.6 获得更稳定的结构化输出。"}),
                 "timeout_seconds": ("INT", {"default": 90, "min": 10, "max": 300, "step": 5, "tooltip": "单次 API 请求超时秒数。"}),
+                "research_log": (
+                    list(RESEARCH_LOG_LEVELS),
+                    {
+                        "default": "Off",
+                        "tooltip": "研究记录。Off=不记录；Metrics only=记录配置、模块状态、耗时、token 用量和结果，剧情只存哈希；Full text=另外保存剧情原文和生成结果。写入位置由本机环境变量 BUFF_AI_RESEARCH_LOG_DIR 决定，从不记录 API Key。",
+                    },
+                ),
+                "research_tag": ("STRING", {"multiline": False, "default": "", "tooltip": "可选。研究记录标签，例如实验编号或基准剧情编号，便于之后分组分析。"}),
 
                 # ---- Old fields remain for workflow compatibility, but the V3.1 JS hides them. ----
                 "character": ("STRING", {"multiline": True, "default": "", "tooltip": "旧版兼容字段。V3.1 新工作流通常无需填写。"}),
@@ -486,233 +496,303 @@ class BuffAIDirectorEnhancer:
         if not config["api_key"]:
             raise RuntimeError(f"[BUFF AI 配置错误] API Key 未找到。请设置环境变量 {api_key_env_var} 后完全重启 ComfyUI。")
 
-        progress_total = 7 if mode == "Quality" else 5
-        progress = self._make_progress(progress_total)
-        self._report_progress(progress, 1, progress_total, "输入校验通过，准备导演上下文")
+        recorder = RunRecorder(kwargs.get("research_log", "Off"), kwargs.get("research_tag", ""))
+        stage = "prepare"
+        try:
+            progress_total = 7 if mode == "Quality" else 5
+            progress = self._make_progress(progress_total)
+            self._report_progress(progress, 1, progress_total, "输入校验通过，准备导演上下文")
 
-        inputs: Dict[str, Any] = dict(kwargs)
-        inputs.update(
-            {
-                "prompt": core_idea,
-                "character": character,
-                "scene": scene,
-                "visual_style": visual_style,
-                "camera_style": camera_style,
-                "target_model": target_model,
-                "generation_mode": generation_mode,
-                "reference_manifest": config["reference_manifest"],
-                "audio_policy": config["audio_policy"],
-                "strict_speech_lock": config["strict_speech_lock"],
-                "offscreen_dialogue_text": config["offscreen_dialogue_text"],
-            }
-        )
-        if not str(inputs.get("character_profiles", "") or "").strip() and str(character or "").strip():
-            inputs["character_profiles"] = str(character).strip()
-        if not str(inputs.get("scene_environment", "") or "").strip() and str(scene or "").strip():
-            inputs["scene_environment"] = str(scene).strip()
-        if config["genre"] not in {"", "Auto"} and not str(inputs.get("genre_guidance", "") or "").strip():
-            inputs["genre_guidance"] = config["genre"]
-        if config["directing_style"] not in {"", "Auto"} and not str(inputs.get("directing_style_guidance", "") or "").strip():
-            inputs["directing_style_guidance"] = config["directing_style"]
-        if config["era_setting"] or config["must_keep"]:
-            existing = str(inputs.get("director_book_guidance", "") or "").strip()
-            added = "\n".join(
-                part
-                for part in (
-                    f"Era / world setting: {config['era_setting']}" if config["era_setting"] else "",
-                    f"Must keep: {config['must_keep']}" if config["must_keep"] else "",
+            inputs: Dict[str, Any] = dict(kwargs)
+            inputs.update(
+                {
+                    "prompt": core_idea,
+                    "character": character,
+                    "scene": scene,
+                    "visual_style": visual_style,
+                    "camera_style": camera_style,
+                    "target_model": target_model,
+                    "generation_mode": generation_mode,
+                    "reference_manifest": config["reference_manifest"],
+                    "audio_policy": config["audio_policy"],
+                    "strict_speech_lock": config["strict_speech_lock"],
+                    "offscreen_dialogue_text": config["offscreen_dialogue_text"],
+                }
+            )
+            if not str(inputs.get("character_profiles", "") or "").strip() and str(character or "").strip():
+                inputs["character_profiles"] = str(character).strip()
+            if not str(inputs.get("scene_environment", "") or "").strip() and str(scene or "").strip():
+                inputs["scene_environment"] = str(scene).strip()
+            if config["genre"] not in {"", "Auto"} and not str(inputs.get("genre_guidance", "") or "").strip():
+                inputs["genre_guidance"] = config["genre"]
+            if config["directing_style"] not in {"", "Auto"} and not str(inputs.get("directing_style_guidance", "") or "").strip():
+                inputs["directing_style_guidance"] = config["directing_style"]
+            if config["era_setting"] or config["must_keep"]:
+                existing = str(inputs.get("director_book_guidance", "") or "").strip()
+                added = "\n".join(
+                    part
+                    for part in (
+                        f"Era / world setting: {config['era_setting']}" if config["era_setting"] else "",
+                        f"Must keep: {config['must_keep']}" if config["must_keep"] else "",
+                    )
+                    if part
                 )
-                if part
-            )
-            inputs["director_book_guidance"] = "\n".join(part for part in (existing, added) if part)
-        if config["must_avoid"]:
-            current = str(inputs.get("negative_constraints", "") or "").strip()
-            inputs["negative_constraints"] = "\n".join(part for part in (current, config["must_avoid"]) if part)
+                inputs["director_book_guidance"] = "\n".join(part for part in (existing, added) if part)
+            if config["must_avoid"]:
+                current = str(inputs.get("negative_constraints", "") or "").strip()
+                inputs["negative_constraints"] = "\n".join(part for part in (current, config["must_avoid"]) if part)
 
-        module_states = resolve_module_states(config["director_preset"], inputs)
-        runtime = resolve_module_runtime(module_states, inputs)
-        module_context = build_module_context(runtime)
-        module_schema = build_dynamic_schema(module_states, config["language"])
-        report = runtime_report(runtime)
+            module_states = resolve_module_states(config["director_preset"], inputs)
+            runtime = resolve_module_runtime(module_states, inputs)
+            module_context = build_module_context(runtime)
+            module_schema = build_dynamic_schema(module_states, config["language"])
+            report = runtime_report(runtime)
 
-        shot_plan_text = str(inputs.get("shot_plan", "") or "").strip()
-        if not shot_plan_text and re.search(r"(?im)^\s*(?:shot|镜头)\s*\d+", core_idea):
-            shot_plan_text = core_idea
-        try:
-            shot_lock = parse_shot_plan(shot_plan_text, total_duration)
-        except ShotPlanError as exc:
-            raise RuntimeError(f"[BUFF AI] Invalid shot plan: {exc}") from exc
-
-        dialogue_entries = parse_dialogue_source(str(inputs.get("dialogue_text", "") or ""))
-        offscreen_dialogue_entries = parse_exact_offscreen_dialogue(config["offscreen_dialogue_text"])
-        references = collect_reference_assets(
-            manifest_text=config["reference_manifest"],
-            inputs=inputs,
-        )
-        ref_summary = reference_summary(references)
-        entity_registry = build_entity_registry(
-            character_names=inputs.get("character_names", ""),
-            reference_manifest=config["reference_manifest"],
-            dialogue_entries=dialogue_entries,
-        )
-        config["entity_registry"] = entity_registry
-        self._report_progress(
-            progress,
-            2,
-            progress_total,
-            f"参考图处理完成：{len(references)} 张；生成方式={generation_mode}",
-        )
-        config["reference_count"] = len(references)
-        config["reference_summary"] = ref_summary
-        config["module_states"] = module_states
-        config["module_report"] = report
-
-        desired_shots = shot_lock.shot_count or self._recommended_shot_count(
-            total_duration,
-            shot_mode,
-            action_level,
-            core_idea,
-        )
-
-        system_prompt = build_director_system_prompt(module_states, config["language"])
-        system_prompt += self._build_audio_system_rules(config, dialogue_entries, offscreen_dialogue_entries)
-        user_prompt = self._build_user_prompt(
-            config=config,
-            inputs=inputs,
-            module_context=module_context,
-            dynamic_schema=module_schema,
-            desired_shots=desired_shots,
-            shot_lock=shot_lock,
-            dialogue_entries=dialogue_entries,
-            offscreen_dialogue_entries=offscreen_dialogue_entries,
-        )
-        client = self._make_client(config)
-        user_content = build_multimodal_content(user_prompt, references)
-
-        self._report_progress(
-            progress,
-            3,
-            progress_total,
-            f"正在请求导演 LLM：{config['api_model']}；stream=false；超时={config['timeout_seconds']}s",
-        )
-        print(
-            f"[BUFF AI] API endpoint: {sanitize_url(OpenAICompatibleClient.build_chat_url(config['api_base_url']))} | "
-            f"model={config['api_model']} | refs={len(references)} | mode={mode}",
-            flush=True,
-        )
-        first_started = time.perf_counter()
-        try:
-            first_text = client.chat(
-                system_prompt,
-                user_prompt,
-                user_content=user_content,
-                temperature=config["temperature"],
-                prefer_json_mode=True,
-            )
-        except APIClientError as exc:
-            print(f"[BUFF AI] 首次 API 请求失败：{exc}", flush=True)
-            raise RuntimeError(f"[BUFF AI API 错误] {exc}") from exc
-        first_elapsed = time.perf_counter() - first_started
-        self._report_progress(progress, 4, progress_total, f"首次 API 响应完成：{first_elapsed:.1f}s，正在解析分镜")
-        first = extract_json_object(first_text)
-        if not first:
-            raise RuntimeError("[BUFF AI] AI returned invalid JSON. Lower temperature or use a stronger JSON-capable model.")
-
-        first = self._apply_user_top_level_locks(first, inputs, ref_summary, config)
-        storyboard = normalize_storyboard(
-            first,
-            total_duration=total_duration,
-            shot_mode=shot_mode,
-            continuity_lock=bool(continuity_lock),
-            shot_lock=shot_lock,
-            dialogue_entries=dialogue_entries,
-            global_dialogue_direction=str(inputs.get("dialogue_direction", "") or ""),
-            module_report=report,
-        )
-        storyboard = self._finalize_storyboard_metadata(storyboard, inputs, config, ref_summary)
-        storyboard = enforce_audio_policy(
-            storyboard,
-            policy=config["audio_policy"],
-            dialogue_entries=dialogue_entries,
-            offscreen_entries=offscreen_dialogue_entries,
-            strict_speech_lock=config["strict_speech_lock"],
-            global_dialogue_direction=str(inputs.get("dialogue_direction", "") or ""),
-        )
-
-        if mode != "Quality":
-            self._report_progress(progress, 5, progress_total, "分镜整理完成，输出提示词")
-
-        if mode == "Quality":
-            self._report_progress(progress, 5, progress_total, "Quality 模式：开始第二次专业审核请求")
-            quality_system = system_prompt + (
-                "\n\nQUALITY SUPERVISOR PASS\nReview the normalized storyboard. Improve only enabled-module craft detail. "
-                "Do not change shot IDs, count, locked timing, exact names, dialogue text, keywords, reference bindings, "
-                "or explicit user decisions. Keep all production/directing fields in the selected OUTPUT LANGUAGE. "
-                "Never invent spoken words outside the configured dialogue/off-screen whitelist. "
-                "Return the same dynamic JSON structure."
-            )
-            quality_user = (
-                f"ACTIVE MODULE CONTEXT:\n{module_context}\n\n"
-                f"DYNAMIC SCHEMA:\n{module_schema}\n\n"
-                "LOCKED NORMALIZED STORYBOARD:\n"
-                + json.dumps(storyboard, ensure_ascii=False, indent=2)
-            )
-            quality_started = time.perf_counter()
+            shot_plan_text = str(inputs.get("shot_plan", "") or "").strip()
+            if not shot_plan_text and re.search(r"(?im)^\s*(?:shot|镜头)\s*\d+", core_idea):
+                shot_plan_text = core_idea
             try:
-                second_text = client.chat(
-                    quality_system,
-                    quality_user,
-                    temperature=min(config["temperature"] + 0.05, 0.9),
+                shot_lock = parse_shot_plan(shot_plan_text, total_duration)
+            except ShotPlanError as exc:
+                raise RuntimeError(f"[BUFF AI] Invalid shot plan: {exc}") from exc
+
+            dialogue_entries = parse_dialogue_source(str(inputs.get("dialogue_text", "") or ""))
+            offscreen_dialogue_entries = parse_exact_offscreen_dialogue(config["offscreen_dialogue_text"])
+            references = collect_reference_assets(
+                manifest_text=config["reference_manifest"],
+                inputs=inputs,
+            )
+            ref_summary = reference_summary(references)
+            entity_registry = build_entity_registry(
+                character_names=inputs.get("character_names", ""),
+                reference_manifest=config["reference_manifest"],
+                dialogue_entries=dialogue_entries,
+            )
+            config["entity_registry"] = entity_registry
+            self._report_progress(
+                progress,
+                2,
+                progress_total,
+                f"参考图处理完成：{len(references)} 张；生成方式={generation_mode}",
+            )
+            config["reference_count"] = len(references)
+            config["reference_summary"] = ref_summary
+            config["module_states"] = module_states
+            config["module_report"] = report
+
+            desired_shots = shot_lock.shot_count or self._recommended_shot_count(
+                total_duration,
+                shot_mode,
+                action_level,
+                core_idea,
+            )
+
+            system_prompt = build_director_system_prompt(module_states, config["language"])
+            system_prompt += self._build_audio_system_rules(config, dialogue_entries, offscreen_dialogue_entries)
+            user_prompt = self._build_user_prompt(
+                config=config,
+                inputs=inputs,
+                module_context=module_context,
+                dynamic_schema=module_schema,
+                desired_shots=desired_shots,
+                shot_lock=shot_lock,
+                dialogue_entries=dialogue_entries,
+                offscreen_dialogue_entries=offscreen_dialogue_entries,
+            )
+            recorder.set_request(
+                config=config,
+                inputs=inputs,
+                module_states=module_states,
+                guidance_inputs=[spec.guidance_input for spec in MODULE_SPECS.values()],
+                dialogue_count=len(dialogue_entries),
+                offscreen_dialogue_count=len(offscreen_dialogue_entries),
+                reference_count=len(references),
+                entity_count=len(entity_registry),
+                locked_shot_count=shot_lock.shot_count,
+                locked_times=shot_lock.has_locked_times,
+                desired_shots=desired_shots,
+            )
+            client = self._make_client(config)
+            user_content = build_multimodal_content(user_prompt, references)
+
+            self._report_progress(
+                progress,
+                3,
+                progress_total,
+                f"正在请求导演 LLM：{config['api_model']}；stream=false；超时={config['timeout_seconds']}s",
+            )
+            print(
+                f"[BUFF AI] API endpoint: {sanitize_url(OpenAICompatibleClient.build_chat_url(config['api_base_url']))} | "
+                f"model={config['api_model']} | refs={len(references)} | mode={mode}",
+                flush=True,
+            )
+            stage = "first_request"
+            first_started = time.perf_counter()
+            try:
+                first_text = client.chat(
+                    system_prompt,
+                    user_prompt,
+                    user_content=user_content,
+                    temperature=config["temperature"],
                     prefer_json_mode=True,
                 )
-                second = extract_json_object(second_text)
             except APIClientError as exc:
-                print(f"[BUFF AI] Quality 二次审核失败，保留第一版结果：{exc}", flush=True)
-                second = None
-            quality_elapsed = time.perf_counter() - quality_started
-            self._report_progress(progress, 6, progress_total, f"Quality 审核阶段结束：{quality_elapsed:.1f}s")
-            if second:
-                merged = self._merge_quality_storyboard(storyboard, second)
-                merged = self._apply_user_top_level_locks(merged, inputs, ref_summary, config)
-                storyboard = normalize_storyboard(
-                    merged,
-                    total_duration=total_duration,
-                    shot_mode=shot_mode,
-                    continuity_lock=bool(continuity_lock),
-                    shot_lock=shot_lock,
-                    dialogue_entries=dialogue_entries,
-                    global_dialogue_direction=str(inputs.get("dialogue_direction", "") or ""),
-                    module_report=report,
+                recorder.add_call(
+                    "first",
+                    elapsed_s=time.perf_counter() - first_started,
+                    ok=False,
+                    system_chars=len(system_prompt),
+                    user_chars=len(user_prompt),
+                    error=exc,
                 )
-                storyboard = self._finalize_storyboard_metadata(storyboard, inputs, config, ref_summary)
-                storyboard = enforce_audio_policy(
-                    storyboard,
-                    policy=config["audio_policy"],
-                    dialogue_entries=dialogue_entries,
-                    offscreen_entries=offscreen_dialogue_entries,
-                    strict_speech_lock=config["strict_speech_lock"],
-                    global_dialogue_direction=str(inputs.get("dialogue_direction", "") or ""),
+                print(f"[BUFF AI] 首次 API 请求失败：{exc}", flush=True)
+                raise RuntimeError(f"[BUFF AI API 错误] {exc}") from exc
+            first_elapsed = time.perf_counter() - first_started
+            self._report_progress(progress, 4, progress_total, f"首次 API 响应完成：{first_elapsed:.1f}s，正在解析分镜")
+            first = extract_json_object(first_text)
+            recorder.add_call(
+                "first",
+                elapsed_s=first_elapsed,
+                ok=True,
+                system_chars=len(system_prompt),
+                user_chars=len(user_prompt),
+                response_chars=len(first_text or ""),
+                usage=getattr(client, "last_usage", None),
+                json_ok=bool(first),
+            )
+            stage = "parse_first_response"
+            if not first:
+                raise RuntimeError("[BUFF AI] AI returned invalid JSON. Lower temperature or use a stronger JSON-capable model.")
+
+            first = self._apply_user_top_level_locks(first, inputs, ref_summary, config)
+            storyboard = normalize_storyboard(
+                first,
+                total_duration=total_duration,
+                shot_mode=shot_mode,
+                continuity_lock=bool(continuity_lock),
+                shot_lock=shot_lock,
+                dialogue_entries=dialogue_entries,
+                global_dialogue_direction=str(inputs.get("dialogue_direction", "") or ""),
+                module_report=report,
+            )
+            storyboard = self._finalize_storyboard_metadata(storyboard, inputs, config, ref_summary)
+            storyboard = enforce_audio_policy(
+                storyboard,
+                policy=config["audio_policy"],
+                dialogue_entries=dialogue_entries,
+                offscreen_entries=offscreen_dialogue_entries,
+                strict_speech_lock=config["strict_speech_lock"],
+                global_dialogue_direction=str(inputs.get("dialogue_direction", "") or ""),
+            )
+
+            if mode != "Quality":
+                self._report_progress(progress, 5, progress_total, "分镜整理完成，输出提示词")
+
+            if mode == "Quality":
+                self._report_progress(progress, 5, progress_total, "Quality 模式：开始第二次专业审核请求")
+                quality_system = system_prompt + (
+                    "\n\nQUALITY SUPERVISOR PASS\nReview the normalized storyboard. Improve only enabled-module craft detail. "
+                    "Do not change shot IDs, count, locked timing, exact names, dialogue text, keywords, reference bindings, "
+                    "or explicit user decisions. Keep all production/directing fields in the selected OUTPUT LANGUAGE. "
+                    "Never invent spoken words outside the configured dialogue/off-screen whitelist. "
+                    "Return the same dynamic JSON structure."
                 )
+                quality_user = (
+                    f"ACTIVE MODULE CONTEXT:\n{module_context}\n\n"
+                    f"DYNAMIC SCHEMA:\n{module_schema}\n\n"
+                    "LOCKED NORMALIZED STORYBOARD:\n"
+                    + json.dumps(storyboard, ensure_ascii=False, indent=2)
+                )
+                stage = "quality_request"
+                quality_started = time.perf_counter()
+                try:
+                    second_text = client.chat(
+                        quality_system,
+                        quality_user,
+                        temperature=min(config["temperature"] + 0.05, 0.9),
+                        prefer_json_mode=True,
+                    )
+                    second = extract_json_object(second_text)
+                    recorder.add_call(
+                        "quality",
+                        elapsed_s=time.perf_counter() - quality_started,
+                        ok=True,
+                        system_chars=len(quality_system),
+                        user_chars=len(quality_user),
+                        response_chars=len(second_text or ""),
+                        usage=getattr(client, "last_usage", None),
+                        json_ok=bool(second),
+                    )
+                except APIClientError as exc:
+                    recorder.add_call(
+                        "quality",
+                        elapsed_s=time.perf_counter() - quality_started,
+                        ok=False,
+                        system_chars=len(quality_system),
+                        user_chars=len(quality_user),
+                        error=exc,
+                    )
+                    print(f"[BUFF AI] Quality 二次审核失败，保留第一版结果：{exc}", flush=True)
+                    second = None
+                quality_elapsed = time.perf_counter() - quality_started
+                self._report_progress(progress, 6, progress_total, f"Quality 审核阶段结束：{quality_elapsed:.1f}s")
+                if second:
+                    stage = "quality_merge"
+                    merged = self._merge_quality_storyboard(storyboard, second)
+                    merged = self._apply_user_top_level_locks(merged, inputs, ref_summary, config)
+                    storyboard = normalize_storyboard(
+                        merged,
+                        total_duration=total_duration,
+                        shot_mode=shot_mode,
+                        continuity_lock=bool(continuity_lock),
+                        shot_lock=shot_lock,
+                        dialogue_entries=dialogue_entries,
+                        global_dialogue_direction=str(inputs.get("dialogue_direction", "") or ""),
+                        module_report=report,
+                    )
+                    storyboard = self._finalize_storyboard_metadata(storyboard, inputs, config, ref_summary)
+                    storyboard = enforce_audio_policy(
+                        storyboard,
+                        policy=config["audio_policy"],
+                        dialogue_entries=dialogue_entries,
+                        offscreen_entries=offscreen_dialogue_entries,
+                        strict_speech_lock=config["strict_speech_lock"],
+                        global_dialogue_direction=str(inputs.get("dialogue_direction", "") or ""),
+                    )
 
-        storyboard = apply_entity_identity_locks(
-            storyboard,
-            entities=config.get("entity_registry", []),
-            explicit_character_names=inputs.get("character_names", ""),
-        )
+            stage = "render"
+            storyboard = apply_entity_identity_locks(
+                storyboard,
+                entities=config.get("entity_registry", []),
+                explicit_character_names=inputs.get("character_names", ""),
+            )
 
-        enhanced_prompt = render_master_prompt(storyboard, module_states=module_states, config=config)
-        shot_prompts = render_shot_prompts(storyboard, module_states=module_states, language=config["language"], include_keywords=True, config=config)
-        storyboard_json = json.dumps(storyboard, ensure_ascii=False, indent=2)
-        director_summary = render_director_summary(
-            storyboard,
-            module_states=module_states,
-            preset=config["director_preset"],
-            language=config["language"],
-        )
-        if mode == "Quality":
-            self._report_progress(progress, 7, progress_total, "完成：提示词已生成")
-        print(f"[BUFF AI] 完成：shots={len(storyboard.get('shots', []))}，输出提示词。", flush=True)
-        return enhanced_prompt, shot_prompts, storyboard_json, director_summary
+            enhanced_prompt = render_master_prompt(storyboard, module_states=module_states, config=config)
+            shot_prompts = render_shot_prompts(storyboard, module_states=module_states, language=config["language"], include_keywords=True, config=config)
+            storyboard_json = json.dumps(storyboard, ensure_ascii=False, indent=2)
+            director_summary = render_director_summary(
+                storyboard,
+                module_states=module_states,
+                preset=config["director_preset"],
+                language=config["language"],
+            )
+            if mode == "Quality":
+                self._report_progress(progress, 7, progress_total, "完成：提示词已生成")
+            recorder.succeed(
+                storyboard=storyboard,
+                enhanced_prompt=enhanced_prompt,
+                shot_prompts=shot_prompts,
+                quality_applied=bool(mode == "Quality" and second),
+            )
+            print(f"[BUFF AI] 完成：shots={len(storyboard.get('shots', []))}，输出提示词。", flush=True)
+            return enhanced_prompt, shot_prompts, storyboard_json, director_summary
+        except Exception as exc:
+            recorder.fail(stage, exc)
+            raise
+        finally:
+            path = recorder.write()
+            if path is not None:
+                print(f"[BUFF AI] 研究记录已写入：{path}", flush=True)
 
     def _make_client(self, config: Mapping[str, Any]) -> OpenAICompatibleClient:
         return OpenAICompatibleClient(

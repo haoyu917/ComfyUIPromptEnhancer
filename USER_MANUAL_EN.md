@@ -232,6 +232,18 @@ Beginners should use `0.5` or `0.6`.
 
 Maximum wait time for one API call. 90 seconds is a normal starting point; use 120–180 seconds for Quality mode or many reference images.
 
+### research_log / research_tag (optional research logging)
+
+Found under Professional mode → API settings. Records the configuration and outcome of each run so you can later analyse which combinations of directing modules work best. The default is `Off`, which records nothing.
+
+- `Off`: no record.
+- `Metrics only`: records every module state, the main parameters, request features (prompt length, whether it contains Chinese, number of dialogue lines and reference images, which guidance fields were filled, and so on), the latency and token usage of each API call, and the outcome (success, or the stage that failed). The prompt is stored only as a SHA-256 digest.
+- `Full text`: additionally stores the prompt text, the storyboard, and the generated prompts.
+
+`research_tag` is a free label, for example an experiment ID or benchmark prompt ID.
+
+Records are appended as one JSON line per run to `research_logs/runs.jsonl` inside the plugin folder (ignored by git). To change the location, set `BUFF_AI_RESEARCH_LOG_DIR` in the ComfyUI process environment; a workflow cannot choose the location, so an imported workflow cannot write files elsewhere on your machine. Records never contain the API key, API base URL, or trusted-host list. A write failure only prints a console warning and never affects prompt generation. Runs that fail on an input error before any request is made (for example non-sequential shot-plan numbers) are not recorded.
+
 ---
 
 ## 6. Language and user-data rules

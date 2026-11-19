@@ -50,6 +50,7 @@ By default, the main node reads its API key from the ComfyUI process environment
 | `BUFF_AI_API_KEY_ENV_VARS` | Optional comma-separated allowlist for additional API-key environment-variable names used by the main node. `BUFF_AI_API_KEY` is always allowed. |
 | `BUFF_AI_API_BASE_URL` | Optional default API base URL; a node input value takes precedence. |
 | `BUFF_AI_API_MODEL` | Optional default language-model ID; a node input value takes precedence. |
+| `BUFF_AI_RESEARCH_LOG_DIR` | Optional directory for research run logs (`runs.jsonl`). Defaults to `research_logs/` in the plugin folder. Logging is off unless the node's `research_log` input is set. |
 
 ### Trusted endpoint format
 

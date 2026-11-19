@@ -60,3 +60,6 @@ Desktop.ini
 extra_model_paths.yaml
 extra_model_paths.yml
 comfy.settings.json
+
+# Local research run logs (may contain prompts and outputs)
+/research_logs/

@@ -109,6 +109,8 @@ const SECTION_WIDGETS = {
     "api_key_env_var",
     "temperature",
     "timeout_seconds",
+    "research_log",
+    "research_tag",
   ]),
 };
 

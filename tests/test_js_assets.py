@@ -42,6 +42,10 @@ def test_modular_ui_has_simple_and_professional_modes_with_sections():
     assert "SECTION_WIDGETS" in text
     for section in ("剧情与角色", "分镜与摄影", "连续性与灯光", "声音与剪辑", "参考图", "API 设置"):
         assert f'"{section}"' in text
+    api_section = text[text.index('"API 设置": new Set(['):]
+    api_section = api_section[: api_section.index("]),")]
+    assert '"research_log"' in api_section
+    assert '"research_tag"' in api_section
     assert 'section === "高级模块"' in text
 
 
