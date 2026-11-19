@@ -44,4 +44,17 @@ A real run. It needs `BUFF_AI_API_KEY` and a `BUFF_AI_TRUSTED_API_HOSTS` entry f
 - `--only P01 P02`: run a subset of prompts.
 - `--retry-errors`: re-run tags whose earlier run failed.
 
+### Model backends (`--provider`)
+
+- `openai-compatible` (the default) is any `/v1/chat/completions` endpoint, set with `--api-base-url` and `--api-model`.
+- `anthropic` is the Claude API. It needs `pip install anthropic`, `BUFF_AI_API_KEY` set to a Claude Console key, and `api.anthropic.com` in `BUFF_AI_TRUSTED_API_HOSTS`. The model is whatever `--api-model` names, for example `claude-opus-5-5` or `claude-sonnet-5-5`.
+- `claude-cli` runs each request through the logged-in Claude Code CLI (`claude -p`), using your own Claude subscription instead of an API key. Each call:
+  - replaces Claude Code's system prompt with the node's;
+  - disables all tools and MCP servers;
+  - runs in an empty temporary directory and saves no session.
+
+  `--api-model` defaults to `claude-opus-5-5`, and `--effort` is optional. Reference images are not supported. Usage counts against your subscription's limits.
+
+**Do not pool backends.** Claude Code adds a little context of its own: about 1.3k input tokens were observed for a one-line prompt. Subscription runs are therefore a slightly different condition from API runs. Every record stores its backend in `config.api_provider`. Give each backend its own experiment name (for example `cli-pilot1`) and analyse it separately with `python -m research.evaluate --experiment cli-pilot1 ...`.
+
 Runs already in the log are skipped, so an interrupted sweep can be restarted with the same command. The default log level is `Full text`, which keeps prompts and outputs for later content-quality scoring.

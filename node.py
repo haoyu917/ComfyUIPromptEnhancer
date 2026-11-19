@@ -158,6 +158,9 @@ class BuffAIDirectorEnhancer:
     CATEGORY = "BUFF AI/Prompt"
     # Allow BUFF AI to run as a workflow endpoint even when the user only wants to inspect prompts.
     OUTPUT_NODE = True
+    # Offline experiment backends (experiments/) set this so research records
+    # name the backend that really answered. The ComfyUI node never sets it.
+    PROVIDER_LABEL_OVERRIDE: Optional[str] = None
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -463,7 +466,7 @@ class BuffAIDirectorEnhancer:
         env_key = os.getenv(api_key_env_var, "").strip()
         legacy_key = str(api_key or "").strip()
         key = env_key or legacy_key or os.getenv("BUFF_AI_API_KEY", "").strip()
-        api_provider = resolve_api_provider(kwargs.get("api_provider", "OpenAI-compatible"))
+        api_provider = self.PROVIDER_LABEL_OVERRIDE or resolve_api_provider(kwargs.get("api_provider", "OpenAI-compatible"))
         resolved_base_url = resolve_base_url(api_provider, api_base_url)
         resolved_model = str(api_model or "").strip() or os.getenv("BUFF_AI_API_MODEL", "").strip()
 

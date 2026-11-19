@@ -10,9 +10,17 @@ the research log. Run from the repository root:
     # Simulated model, no API calls: checks the whole pipeline end to end.
     python experiments/run_sweep.py --experiment dry1 --random-configs 3 --dry-run
 
-    # Real run (needs BUFF_AI_API_KEY and BUFF_AI_TRUSTED_API_HOSTS set).
+    # Real run on an OpenAI-compatible endpoint (needs BUFF_AI_API_KEY and
+    # BUFF_AI_TRUSTED_API_HOSTS set).
     python experiments/run_sweep.py --experiment pilot1 --random-configs 3 \
         --api-base-url https://api.example.com/v1 --api-model MODEL_ID
+
+    # Claude API (needs `pip install anthropic`, BUFF_AI_API_KEY, and
+    # api.anthropic.com in BUFF_AI_TRUSTED_API_HOSTS).
+    python experiments/run_sweep.py --experiment pilot1 --provider anthropic --api-model claude-opus-5-5
+
+    # Your own Claude subscription through the logged-in Claude Code CLI.
+    python experiments/run_sweep.py --experiment cli-pilot1 --provider claude-cli --api-model claude-opus-5-5
 
 Configurations are the three non-custom presets as baselines plus N random
 Off/Auto module subsets per prompt. Random subsets are seeded by experiment
@@ -41,6 +49,9 @@ if str(ROOT) not in sys.path:
 from director_modules import MODULE_SPECS, PRESET_STATES  # noqa: E402
 from node import BuffAIDirectorEnhancer  # noqa: E402
 from run_logger import RESEARCH_LOG_DIR_ENV, RESEARCH_LOG_FILENAME  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from claude_cli_client import EFFORT_LEVELS, PROVIDER_LABEL, ClaudeCodeCLIClient  # noqa: E402
 
 DEFAULT_PROMPTS = Path(__file__).resolve().parent / "benchmark_prompts.jsonl"
 DEFAULT_DRY_RUN_DIR = Path(__file__).resolve().parent / "dry_run_logs"
@@ -177,7 +188,10 @@ def logged_tags(log_path: Path, *, include_errors: bool) -> set[str]:
     return tags
 
 
-def node_kwargs(run: PlannedRun, *, mode: str, language: str, temperature: float, log_level: str, api_base_url: str, api_model: str, timeout: int) -> Dict[str, Any]:
+PROVIDERS = {"openai-compatible": "OpenAI-compatible", "anthropic": "Anthropic", "claude-cli": PROVIDER_LABEL}
+
+
+def node_kwargs(run: PlannedRun, *, mode: str, language: str, temperature: float, log_level: str, api_base_url: str, api_model: str, timeout: int, api_provider: str = "OpenAI-compatible") -> Dict[str, Any]:
     case = run.case
     kwargs: Dict[str, Any] = {
         "prompt": case["prompt"],
@@ -189,6 +203,7 @@ def node_kwargs(run: PlannedRun, *, mode: str, language: str, temperature: float
         "mode": mode,
         "temperature": temperature,
         "timeout_seconds": timeout,
+        "api_provider": api_provider,
         "api_base_url": api_base_url,
         "api_model": api_model,
         "research_log": log_level,
@@ -274,6 +289,18 @@ class SimulatedNode(BuffAIDirectorEnhancer):
         return self._client
 
 
+class ClaudeCLINode(BuffAIDirectorEnhancer):
+    """Runs the node pipeline with the Claude Code CLI as the model backend."""
+
+    PROVIDER_LABEL_OVERRIDE = PROVIDER_LABEL
+
+    def __init__(self, effort: Optional[str] = None):
+        self.effort = effort
+
+    def _make_client(self, config: Mapping[str, Any]) -> ClaudeCodeCLIClient:
+        return ClaudeCodeCLIClient(config["api_model"], config["timeout_seconds"], effort=self.effort)
+
+
 # ---- command line ------------------------------------------------------------
 
 
@@ -288,9 +315,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=("Fast", "Quality"), default="Fast")
     parser.add_argument("--language", choices=("中文", "English"), default="中文")
     parser.add_argument("--temperature", type=float, default=0.5)
-    parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--log-level", choices=("Metrics only", "Full text"), default="Full text")
     parser.add_argument("--log-dir", type=Path, default=None, help="Overrides BUFF_AI_RESEARCH_LOG_DIR for this run.")
+    parser.add_argument(
+        "--provider",
+        choices=tuple(PROVIDERS),
+        default="openai-compatible",
+        help="Model backend. claude-cli uses your logged-in Claude Code subscription; use a separate experiment name for it.",
+    )
+    parser.add_argument("--effort", choices=EFFORT_LEVELS, default=None, help="Effort level for --provider claude-cli.")
     parser.add_argument("--api-base-url", default=os.getenv("BUFF_AI_API_BASE_URL", ""))
     parser.add_argument("--api-model", default=os.getenv("BUFF_AI_API_MODEL", ""))
     parser.add_argument("--max-runs", type=int, default=None, help="Stop after this many new runs (cost cap).")
@@ -337,14 +371,21 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
     elif args.dry_run:
         # Keep synthetic records out of the real research log.
         os.environ[RESEARCH_LOG_DIR_ENV] = str(DEFAULT_DRY_RUN_DIR)
-    if args.dry_run:
-        # The simulated client never opens a connection; the placeholder
+    cli_backend = args.provider == "claude-cli" and not args.dry_run
+    if args.provider == "anthropic" and not args.api_base_url:
+        args.api_base_url = "https://api.anthropic.com"
+    if args.dry_run or cli_backend:
+        # The simulated client and the CLI never use the node's HTTP endpoint
+        # or key; the placeholder
         # endpoint only has to pass the node's trust check in this process.
         trusted = [host for host in os.environ.get("BUFF_AI_TRUSTED_API_HOSTS", "").split(",") if host.strip()]
         os.environ["BUFF_AI_TRUSTED_API_HOSTS"] = ",".join(trusted + [DRY_RUN_HOST])
         args.api_base_url = f"http://{DRY_RUN_HOST}/v1"
+        os.environ.setdefault("BUFF_AI_API_KEY", "placeholder-not-sent")
+    if args.dry_run:
         args.api_model = "simulated"
-        os.environ.setdefault("BUFF_AI_API_KEY", "dry-run-placeholder")
+    elif cli_backend and not args.api_model:
+        args.api_model = "claude-opus-5-5"
 
     from run_logger import resolve_log_path
 
@@ -355,11 +396,13 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
     if args.max_runs is not None:
         pending = pending[: args.max_runs]
     calls_per_run = 2 if args.mode == "Quality" else 1
+    unit = "subscription requests" if cli_backend else "API calls"
 
     print(f"Experiment:    {experiment}")
     print(f"Prompts:       {len(cases)}")
     print(f"Configs:       {len(runs)} planned ({len(runs) - len(pending)} already logged or capped)")
-    print(f"To run now:    {len(pending)} runs, about {len(pending) * calls_per_run} API calls ({args.mode})")
+    print(f"Backend:       {'simulated' if args.dry_run else PROVIDERS[args.provider]} | model={args.api_model or '(unset)'}")
+    print(f"To run now:    {len(pending)} runs, about {len(pending) * calls_per_run} {unit} ({args.mode})")
     print(f"Log file:      {log_path}")
     if args.plan:
         for run in pending:
@@ -375,14 +418,19 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
             print("Set --api-base-url and --api-model (or BUFF_AI_API_BASE_URL / BUFF_AI_API_MODEL).", file=sys.stderr)
             return 2
         if not args.yes:
-            answer = input(f"Make about {len(pending) * calls_per_run} real API calls? [y/N] ").strip().lower()
+            answer = input(f"Make about {len(pending) * calls_per_run} real {unit}? [y/N] ").strip().lower()
             if answer not in {"y", "yes"}:
                 print("Cancelled.")
                 return 1
 
     ok = failed = 0
     for number, run in enumerate(pending, start=1):
-        node = SimulatedNode(run.case, args.seed, run.tag) if args.dry_run else BuffAIDirectorEnhancer()
+        if args.dry_run:
+            node = SimulatedNode(run.case, args.seed, run.tag)
+        elif cli_backend:
+            node = ClaudeCLINode(args.effort)
+        else:
+            node = BuffAIDirectorEnhancer()
         kwargs = node_kwargs(
             run,
             mode=args.mode,
@@ -392,6 +440,7 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
             api_base_url=args.api_base_url,
             api_model=args.api_model,
             timeout=args.timeout,
+            api_provider=PROVIDERS[args.provider],
         )
         started = time.perf_counter()
         try:

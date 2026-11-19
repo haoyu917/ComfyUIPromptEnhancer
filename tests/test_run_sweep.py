@@ -134,3 +134,112 @@ def test_main_restores_environment(tmp_path, monkeypatch):
     sweep.main(["--experiment", "env", "--random-configs", "0", "--dry-run", "--only", "P11", "--log-dir", str(tmp_path)])
     assert os.environ["BUFF_AI_TRUSTED_API_HOSTS"] == "api.example.com"
     assert "BUFF_AI_RESEARCH_LOG_DIR" not in os.environ
+
+
+# ---- Claude Code CLI backend ---------------------------------------------------
+
+import subprocess as _subprocess
+from types import SimpleNamespace as _NS
+
+sys.path.insert(0, str(ROOT / "experiments"))
+from claude_cli_client import ClaudeCodeCLIClient  # noqa: E402
+from api_client import APIClientError  # noqa: E402
+
+
+def _cli_result(result='{"ok": true}', *, returncode=0, **extra):
+    payload = {
+        "type": "result", "subtype": "success", "is_error": False, "stop_reason": "end_turn", "result": result,
+        "usage": {"input_tokens": 5, "cache_creation_input_tokens": 1000, "cache_read_input_tokens": 0, "output_tokens": 40},
+        "modelUsage": {"claude-opus-5-5": {}},
+    }
+    payload.update(extra)
+    return _NS(returncode=returncode, stdout=json.dumps(payload), stderr="")
+
+
+class _Runner:
+    def __init__(self, completed):
+        self.completed = completed
+        self.calls = []
+
+    def __call__(self, command, **kwargs):
+        system_file = Path(command[command.index("--system-prompt-file") + 1])
+        self.calls.append({"command": command, "system": system_file.read_text(encoding="utf-8"), **kwargs})
+        if isinstance(self.completed, BaseException):
+            raise self.completed
+        return self.completed
+
+
+def test_cli_client_builds_isolated_command_and_reads_usage():
+    runner = _Runner(_cli_result())
+    client = ClaudeCodeCLIClient("claude-sonnet-5-5", 60, effort="high", runner=runner)
+    assert client.chat("SYSTEM PROMPT", "USER PROMPT") == '{"ok": true}'
+    [call] = runner.calls
+    command = call["command"]
+    assert command[:2] == ["claude", "-p"]
+    assert command[command.index("--model") + 1] == "claude-sonnet-5-5"
+    assert command[command.index("--tools") + 1] == ""
+    assert "--strict-mcp-config" in command and "--no-session-persistence" in command
+    assert command[command.index("--effort") + 1] == "high"
+    assert call["system"] == "SYSTEM PROMPT"
+    assert call["input"] == "USER PROMPT"
+    assert "USER PROMPT" not in command  # sent on stdin, not argv
+    assert client.last_usage == {"prompt_tokens": 1005, "completion_tokens": 40, "total_tokens": 1045}
+    assert client.last_served_model == "claude-opus-5-5"
+
+
+@pytest.mark.parametrize("model", ["--dangerously-skip-permissions", "", "a b", "-x"])
+def test_cli_client_rejects_model_names_that_could_be_flags(model):
+    with pytest.raises(APIClientError):
+        ClaudeCodeCLIClient(model, 60)
+
+
+@pytest.mark.parametrize(
+    "completed, message",
+    [
+        (_cli_result(is_error=True, subtype="error_during_execution"), "failed"),
+        (_cli_result(returncode=1), "failed"),
+        (_cli_result(stop_reason="refusal"), "refusal"),
+        (_cli_result(stop_reason="max_tokens"), "truncated"),
+        (_cli_result(result=""), "empty"),
+        (_NS(returncode=1, stdout="not json with PROMPT TEXT", stderr="secret stderr"), "no JSON"),
+        (_subprocess.TimeoutExpired(cmd="claude", timeout=5), "within"),
+    ],
+)
+def test_cli_client_failures_raise_without_echoing_output(completed, message):
+    client = ClaudeCodeCLIClient("claude-opus-5-5", 5, runner=_Runner(completed))
+    with pytest.raises(APIClientError, match=message) as info:
+        client.chat("s", "u")
+    assert "PROMPT TEXT" not in str(info.value) and "secret stderr" not in str(info.value)
+
+
+def test_cli_client_rejects_reference_images():
+    client = ClaudeCodeCLIClient("claude-opus-5-5", 5, runner=_Runner(_cli_result()))
+    with pytest.raises(APIClientError, match="reference images"):
+        client.chat("s", "u", user_content=[{"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}}])
+
+
+def test_sweep_cli_provider_labels_records_and_never_uses_http(tmp_path, monkeypatch):
+    response = json.dumps(
+        {
+            "title": "t", "overview": "o", "keywords": "",
+            "shots": [{"id": 1, "visual_information": "v", "performance_action": "p", "dialogues": []}],
+        },
+        ensure_ascii=False,
+    )
+    runner = _Runner(_cli_result(response))
+    original = ClaudeCodeCLIClient.__init__
+
+    def patched(self, model, timeout_seconds, **kwargs):
+        original(self, model, timeout_seconds, runner=runner, **kwargs)
+
+    monkeypatch.setattr(ClaudeCodeCLIClient, "__init__", patched)
+    monkeypatch.setattr(sweep.ClaudeCodeCLIClient, "__init__", patched)
+    code = sweep.main(["--experiment", "cli", "--provider", "claude-cli", "--only", "P11", "--random-configs", "0", "--no-baselines", "--yes", "--log-dir", str(tmp_path)])
+    assert code == 0  # no configs planned: nothing to do
+    code = sweep.main(["--experiment", "cli", "--provider", "claude-cli", "--only", "P11", "--random-configs", "1", "--no-baselines", "--yes", "--log-dir", str(tmp_path)])
+    assert code == 0
+    [record] = _records(tmp_path / "runs.jsonl")
+    assert record["config"]["api_provider"] == "Claude Code CLI"
+    assert record["config"]["api_model"] == "claude-opus-5-5"
+    assert record["totals"]["total_tokens"] == 1045
+    assert len(runner.calls) == 1
