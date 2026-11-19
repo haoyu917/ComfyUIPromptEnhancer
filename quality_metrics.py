@@ -18,7 +18,7 @@ import json
 from collections import Counter
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
-METRICS_VERSION = 1
+METRICS_VERSION = 2  # 2: allowed off-screen lines are not counted as on-screen violations
 
 # Schema fields that may legitimately be empty, or that the user owns rather
 # than the model, and so do not count toward field coverage.
@@ -97,14 +97,23 @@ def _source_index(row: Mapping[str, Any]) -> int:
         return 0
 
 
-def _dialogue_metrics(raw: Mapping[str, Any], dialogue_entries: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+def _dialogue_metrics(
+    raw: Mapping[str, Any],
+    dialogue_entries: Sequence[Mapping[str, Any]],
+    offscreen_entries: Sequence[Mapping[str, Any]] = (),
+) -> Dict[str, Any]:
     allowed = {_source_index(row): str(row.get("text", "") or "").strip() for row in dialogue_entries}
     allowed.pop(0, None)
+    # On-screen and off-screen entries are both numbered from 1, so a model
+    # that places an allowed off-screen line in a shot's dialogues reuses an
+    # on-screen source_index. Recognize those rows by exact text instead.
+    offscreen_texts = {str(row.get("text", "") or "").strip() for row in offscreen_entries} - {""}
 
     assigned: Counter[int] = Counter()
     verbatim = 0
     matched_rows = 0
     invented = 0
+    offscreen_rows = 0
     for shot in _raw_shots(raw):
         rows = shot.get("dialogues")
         if not isinstance(rows, list):
@@ -114,6 +123,9 @@ def _dialogue_metrics(raw: Mapping[str, Any], dialogue_entries: Sequence[Mapping
                 continue
             idx = _source_index(row)
             text = str(row.get("text", "") or "").strip()
+            if text in offscreen_texts and allowed.get(idx) != text:
+                offscreen_rows += 1
+                continue
             if idx in allowed:
                 assigned[idx] += 1
                 matched_rows += 1
@@ -136,6 +148,7 @@ def _dialogue_metrics(raw: Mapping[str, Any], dialogue_entries: Sequence[Mapping
         "dialogue_verbatim_rate": verbatim_rate,
         "dialogue_duplicates": sum(count - 1 for count in assigned.values() if count > 1),
         "invented_dialogue_count": invented,
+        "offscreen_lines_in_dialogues": offscreen_rows,
     }
 
 
@@ -177,6 +190,7 @@ def score_response(
     *,
     schema_text: str,
     dialogue_entries: Sequence[Mapping[str, Any]] = (),
+    offscreen_entries: Sequence[Mapping[str, Any]] = (),
     entities: Sequence[str] = (),
     user_keywords: str = "",
     target_shots: int = 1,
@@ -191,7 +205,7 @@ def score_response(
     metrics: Dict[str, Any] = {"json_ok": True}
     metrics.update(_coverage(raw, top_fields, shot_fields))
     metrics.update(_shot_count_metrics(raw, target_shots, shot_count_locked, safe_max_shots))
-    metrics.update(_dialogue_metrics(raw, dialogue_entries))
+    metrics.update(_dialogue_metrics(raw, dialogue_entries, offscreen_entries))
     metrics["entity_token_rate"] = _entity_token_rate(raw, entities)
     metrics["keywords_ok"] = _keywords_ok(raw, user_keywords)
     return metrics

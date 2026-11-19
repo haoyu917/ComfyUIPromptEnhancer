@@ -191,6 +191,7 @@ class RunRecorder:
         usage: Any = None,
         json_ok: Optional[bool] = None,
         error: Optional[BaseException] = None,
+        response_text: Optional[str] = None,
     ) -> None:
         if not self.enabled:
             return
@@ -207,6 +208,10 @@ class RunRecorder:
             call["json_ok"] = bool(json_ok)
         if error is not None:
             call["error_type"] = type(error).__name__
+        if self.full_text and response_text is not None:
+            # The raw response is what the quality metrics score; keep it so a
+            # metric result can be checked by hand.
+            call["response_text"] = response_text
         self.calls.append(call)
 
     def set_metrics(self, metrics: Mapping[str, Any]) -> None:

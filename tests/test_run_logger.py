@@ -93,6 +93,7 @@ def test_metrics_only_records_configuration_features_and_outcome_without_text(lo
 
     assert "prompt_text" not in record
     assert "outputs" not in record
+    assert "response_text" not in record["calls"][0]
     raw = json.dumps(record, ensure_ascii=False)
     assert "妖王逼近女妖" not in raw
 
@@ -114,6 +115,7 @@ def test_full_text_also_records_prompt_and_outputs(log_dir):
     assert record["prompt_text"].startswith("妖王逼近女妖")
     assert record["outputs"]["enhanced_prompt"]
     assert record["outputs"]["storyboard"]["shots"]
+    assert json.loads(record["calls"][0]["response_text"])["title"] == "Stone Chamber"
 
 
 def test_quality_mode_records_both_calls(log_dir):

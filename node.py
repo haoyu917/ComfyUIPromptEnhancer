@@ -660,6 +660,8 @@ class BuffAIDirectorEnhancer:
                 schema_text=module_schema,
                 # Under SFX Only no spoken line is allowed, so every returned line counts as invented.
                 dialogue_entries=() if config["audio_policy"] == "SFX Only" else dialogue_entries,
+                # Exact off-screen lines are allowed speech only under this policy.
+                offscreen_entries=offscreen_dialogue_entries if config["audio_policy"] == "Dialogue + Exact Offscreen" else (),
                 entities=entity_registry,
                 user_keywords=str(inputs.get("keywords", "") or ""),
                 target_shots=desired_shots,
@@ -725,6 +727,7 @@ class BuffAIDirectorEnhancer:
                 response_chars=len(first_text or ""),
                 usage=getattr(client, "last_usage", None),
                 json_ok=bool(first),
+                response_text=first_text,
             )
             stage = "parse_first_response"
             if recorder.enabled and first:
@@ -793,6 +796,7 @@ class BuffAIDirectorEnhancer:
                         response_chars=len(second_text or ""),
                         usage=getattr(client, "last_usage", None),
                         json_ok=bool(second),
+                        response_text=second_text,
                     )
                 except APIClientError as exc:
                     recorder.add_call(

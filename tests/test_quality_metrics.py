@@ -247,3 +247,23 @@ def test_sfx_only_treats_any_returned_line_as_invented(log_dir):
     assert metrics["first"]["dialogue_lines"] == 0
     assert metrics["first"]["invented_dialogue_count"] == 1
     assert "dialogue_invented" in metrics["lock_violations"]
+
+
+def test_allowed_offscreen_line_reusing_an_index_is_not_an_onscreen_violation():
+    # Observed with a real model: the off-screen line was placed in a shot's
+    # dialogues with source_index 1, the same index as on-screen line 1.
+    offscreen = [{"source_index": 1, "speaker": "门外司仪", "text": "吉时已到！"}]
+    raw = _full_response(
+        dialogues=[
+            [{"source_index": 1, "text": DIALOGUE[0]["text"]}, {"source_index": 2, "text": DIALOGUE[1]["text"]}],
+            [{"source_index": 1, "speaker": "门外司仪", "text": "吉时已到！"}],
+        ]
+    )
+    common = dict(schema_text=_schema(), dialogue_entries=DIALOGUE, target_shots=2, safe_max_shots=9)
+    allowed = score_response(raw, offscreen_entries=offscreen, **common)
+    assert allowed["offscreen_lines_in_dialogues"] == 1
+    assert allowed["dialogue_duplicates"] == 0 and allowed["dialogue_verbatim_rate"] == 1.0
+    assert lock_violations(allowed, strict_speech=True) == []
+    # When off-screen speech is not allowed, the same line is a violation.
+    not_allowed = score_response(raw, **common)
+    assert lock_violations(not_allowed, strict_speech=True) != []
