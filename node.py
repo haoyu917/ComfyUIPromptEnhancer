@@ -51,6 +51,7 @@ try:
     from .shot_planner import ShotPlanError, ShotPlanLock, parse_shot_plan
     from .storyboard import normalize_storyboard
     from .run_logger import RESEARCH_LOG_LEVELS, RunRecorder
+    from .anthropic_client import DEFAULT_ANTHROPIC_BASE_URL, AnthropicClient
     from .quality_metrics import build_run_metrics
     from .storyboard import _safe_shot_count
 except ImportError:  # Standalone test fallback.
@@ -94,6 +95,7 @@ except ImportError:  # Standalone test fallback.
     from shot_planner import ShotPlanError, ShotPlanLock, parse_shot_plan
     from storyboard import normalize_storyboard
     from run_logger import RESEARCH_LOG_LEVELS, RunRecorder
+    from anthropic_client import DEFAULT_ANTHROPIC_BASE_URL, AnthropicClient
     from quality_metrics import build_run_metrics
     from storyboard import _safe_shot_count
 
@@ -125,6 +127,21 @@ class ContainsAnyDict(dict):
             return self[key]
         except KeyError:
             return default
+
+
+API_PROVIDERS = ("OpenAI-compatible", "Anthropic")
+
+
+def resolve_api_provider(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if text in API_PROVIDERS else "OpenAI-compatible"
+
+
+def resolve_base_url(provider: str, value: Any) -> str:
+    base = str(value or "").strip() or os.getenv("BUFF_AI_API_BASE_URL", "").strip()
+    if not base and provider == "Anthropic":
+        return DEFAULT_ANTHROPIC_BASE_URL
+    return base
 
 
 class BuffAIDirectorEnhancer:
@@ -239,8 +256,15 @@ class BuffAIDirectorEnhancer:
                 ),
                 "must_keep": ("STRING", {"multiline": True, "default": "", "tooltip": "可选。绝对必须保持的内容，例如：人物服装不变；石桌始终在女妖身后。"}),
                 "must_avoid": ("STRING", {"multiline": True, "default": "", "tooltip": "可选。绝对不能出现的内容，例如：不要亲吻；不要环绕运镜。"}),
-                "api_base_url": ("STRING", {"multiline": False, "default": "", "tooltip": "必填。主机必须加入本机 BUFF_AI_TRUSTED_API_HOSTS；远程地址使用 HTTPS，本机回环可用 HTTP。"}),
-                "api_model": ("STRING", {"multiline": False, "default": "", "tooltip": "必填。用于导演分析和完善 Prompt 的语言模型 ID。也可设置 BUFF_AI_API_MODEL 环境变量。"}),
+                "api_provider": (
+                    list(API_PROVIDERS),
+                    {
+                        "default": "OpenAI-compatible",
+                        "tooltip": "API 类型。OpenAI-compatible：中转站或任何 /v1/chat/completions 接口；Anthropic：Claude 官方 API（需要 pip install anthropic，地址可留空，默认 https://api.anthropic.com）。",
+                    },
+                ),
+                "api_base_url": ("STRING", {"multiline": False, "default": "", "tooltip": "主机必须加入本机 BUFF_AI_TRUSTED_API_HOSTS；远程地址使用 HTTPS，本机回环可用 HTTP。选 Anthropic 时可留空。"}),
+                "api_model": ("STRING", {"multiline": False, "default": "", "tooltip": "必填。用于导演分析和完善 Prompt 的语言模型 ID，可自由填写，例如中转站的模型 ID，或 Claude 的 claude-opus-5-5、claude-sonnet-5-5。也可设置 BUFF_AI_API_MODEL 环境变量。"}),
                 "api_key_env_var": (
                     "STRING",
                     {
@@ -349,6 +373,7 @@ class BuffAIDirectorEnhancer:
         api_model="",
         api_key="",
         api_key_env_var="BUFF_AI_API_KEY",
+        api_provider="OpenAI-compatible",
     ):
         """Fail before execution for common configuration mistakes.
 
@@ -359,7 +384,7 @@ class BuffAIDirectorEnhancer:
         if not idea:
             return "[BUFF AI 配置错误] 剧情描述不能为空。"
 
-        base_url = str(api_base_url or "").strip() or os.getenv("BUFF_AI_API_BASE_URL", "").strip()
+        base_url = resolve_base_url(resolve_api_provider(api_provider), api_base_url)
         model = str(api_model or "").strip() or os.getenv("BUFF_AI_API_MODEL", "").strip()
         try:
             env_name = validate_api_key_env_name(api_key_env_var)
@@ -438,7 +463,8 @@ class BuffAIDirectorEnhancer:
         env_key = os.getenv(api_key_env_var, "").strip()
         legacy_key = str(api_key or "").strip()
         key = env_key or legacy_key or os.getenv("BUFF_AI_API_KEY", "").strip()
-        resolved_base_url = str(api_base_url or "").strip() or os.getenv("BUFF_AI_API_BASE_URL", "").strip()
+        api_provider = resolve_api_provider(kwargs.get("api_provider", "OpenAI-compatible"))
+        resolved_base_url = resolve_base_url(api_provider, api_base_url)
         resolved_model = str(api_model or "").strip() or os.getenv("BUFF_AI_API_MODEL", "").strip()
 
         # V3.1 UI has only two real user-facing modes. Keep old director_preset
@@ -463,6 +489,7 @@ class BuffAIDirectorEnhancer:
             "target_model": target_model,
             "language": language,
             "mode": mode,
+            "api_provider": api_provider,
             "api_base_url": resolved_base_url,
             "api_model": resolved_model,
             "api_key": key,
@@ -650,7 +677,7 @@ class BuffAIDirectorEnhancer:
                 f"正在请求导演 LLM：{config['api_model']}；stream=false；超时={config['timeout_seconds']}s",
             )
             print(
-                f"[BUFF AI] API endpoint: {sanitize_url(OpenAICompatibleClient.build_chat_url(config['api_base_url']))} | "
+                f"[BUFF AI] API endpoint: {self._endpoint_label(config)} | provider={config['api_provider']} | "
                 f"model={config['api_model']} | refs={len(references)} | mode={mode}",
                 flush=True,
             )
@@ -836,7 +863,21 @@ class BuffAIDirectorEnhancer:
             if path is not None:
                 print(f"[BUFF AI] 研究记录已写入：{path}", flush=True)
 
-    def _make_client(self, config: Mapping[str, Any]) -> OpenAICompatibleClient:
+    @staticmethod
+    def _endpoint_label(config: Mapping[str, Any]) -> str:
+        if config.get("api_provider") == "Anthropic":
+            return sanitize_url(str(config["api_base_url"]).rstrip("/") + "/v1/messages")
+        return sanitize_url(OpenAICompatibleClient.build_chat_url(config["api_base_url"]))
+
+    def _make_client(self, config: Mapping[str, Any]) -> Any:
+        if config.get("api_provider") == "Anthropic":
+            return AnthropicClient(
+                config["api_base_url"],
+                config["api_key"],
+                config["api_model"],
+                config["timeout_seconds"],
+                trusted_hosts=config.get("trusted_api_hosts"),
+            )
         return OpenAICompatibleClient(
             config["api_base_url"],
             config["api_key"],

@@ -239,6 +239,13 @@ AI可以扩展成更专业的摄影说明，但不能改成全景、环绕或手
 - `Fast`：调用一次 API，速度快。
 - `Quality`：在第一版分镜完成后，再调用一次 API 做专业检查与补全。第二次调用不能修改时间、角色姓名、用户对白、关键词或用户锁定内容。
 
+### api_provider
+
+API 类型，默认 `OpenAI-compatible`。
+
+- `OpenAI-compatible`：中转站、EasyCLI 或任何提供 `/v1/chat/completions` 的服务，和以前的用法完全一样。
+- `Anthropic`：直接使用 Claude 官方 API。需要先在 ComfyUI 使用的 Python 环境里运行 `pip install anthropic`；`api_base_url` 可以留空（默认 `https://api.anthropic.com`），但仍需把 `api.anthropic.com` 加入 `BUFF_AI_TRUSTED_API_HOSTS`。API Key 在 Claude Console（platform.claude.com）创建，API 按用量计费，和 claude.ai 的订阅分开。`api_model` 可自由填写，例如 `claude-opus-5-5` 或 `claude-sonnet-5-5`。Claude 当前的模型不接受 `temperature` 参数，所以选 Anthropic 时 `temperature` 不会生效。
+
 ### api_base_url
 
 AI 接口地址。EasyCLI 同机使用时通常是 `http://127.0.0.1:8317/v1`。

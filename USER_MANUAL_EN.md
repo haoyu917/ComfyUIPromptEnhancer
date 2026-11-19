@@ -198,6 +198,13 @@ This is a compatibility control. V3 writes directing and production instructions
 - `Fast`: one API call.
 - `Quality`: a second module-aware supervisor pass. It cannot change locked timing, names, user dialogue, keywords, or user constraints.
 
+### api_provider
+
+The API type; the default is `OpenAI-compatible`.
+
+- `OpenAI-compatible`: a relay, EasyCLI, or any service that offers `/v1/chat/completions`, exactly as before.
+- `Anthropic`: the Claude API directly. Run `pip install anthropic` in the Python environment ComfyUI uses. `api_base_url` may be left blank (it defaults to `https://api.anthropic.com`), but `api.anthropic.com` must still be in `BUFF_AI_TRUSTED_API_HOSTS`. Create the API key in the Claude Console (platform.claude.com); API usage is billed separately from claude.ai subscriptions. `api_model` is free text, for example `claude-opus-5-5` or `claude-sonnet-5-5`. Current Claude models do not accept a `temperature` parameter, so `temperature` has no effect with this provider.
+
 ### api_base_url
 
 The AI endpoint. For EasyCLI on the same computer, this is commonly `http://127.0.0.1:8317/v1`.

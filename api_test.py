@@ -5,12 +5,26 @@ from __future__ import annotations
 import os
 try:
     from .api_client import APIClientError, OpenAICompatibleClient, sanitize_url, validate_api_endpoint
+    from .anthropic_client import DEFAULT_ANTHROPIC_BASE_URL, AnthropicClient
 except ImportError:  # Standalone test fallback.
     from api_client import APIClientError, OpenAICompatibleClient, sanitize_url, validate_api_endpoint
+    from anthropic_client import DEFAULT_ANTHROPIC_BASE_URL, AnthropicClient
+
+API_PROVIDERS = ("OpenAI-compatible", "Anthropic")
+
+
+def _provider(value) -> str:
+    text = str(value or "").strip()
+    return text if text in API_PROVIDERS else "OpenAI-compatible"
+
+
+def _base_url(provider: str, value) -> str:
+    base = str(value or "").strip() or os.getenv("BUFF_AI_API_BASE_URL", "").strip()
+    return base or (DEFAULT_ANTHROPIC_BASE_URL if provider == "Anthropic" else "")
 
 
 class BuffAIAPITest:
-    DESCRIPTION = "Test BUFF AI OpenAI-compatible API settings with a tiny non-streaming chat request."
+    DESCRIPTION = "Test BUFF AI API settings (OpenAI-compatible or Anthropic) with a tiny non-streaming request."
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("status",)
     FUNCTION = "test_api"
@@ -39,6 +53,10 @@ class BuffAIAPITest:
                 ),
             },
             "optional": {
+                "api_provider": (
+                    list(API_PROVIDERS),
+                    {"default": "OpenAI-compatible", "tooltip": "OpenAI-compatible：中转站；Anthropic：Claude 官方 API（地址可留空）。"},
+                ),
                 "timeout_seconds": (
                     "INT",
                     {"default": 20, "min": 5, "max": 120, "step": 5},
@@ -47,8 +65,8 @@ class BuffAIAPITest:
         }
 
     @classmethod
-    def VALIDATE_INPUTS(cls, api_base_url="", api_model="", api_key=""):
-        base_url = str(api_base_url or "").strip() or os.getenv("BUFF_AI_API_BASE_URL", "").strip()
+    def VALIDATE_INPUTS(cls, api_base_url="", api_model="", api_key="", api_provider="OpenAI-compatible"):
+        base_url = _base_url(_provider(api_provider), api_base_url)
         model = str(api_model or "").strip() or os.getenv("BUFF_AI_API_MODEL", "").strip()
         key = os.getenv("BUFF_AI_API_KEY", "").strip()
         if not base_url:
@@ -63,16 +81,28 @@ class BuffAIAPITest:
             return "[BUFF AI 配置错误] API Key 未填写。"
         return True
 
-    def test_api(self, api_base_url: str, api_model: str, api_key: str = "", timeout_seconds: int = 20):
-        base_url = str(api_base_url or "").strip() or os.getenv("BUFF_AI_API_BASE_URL", "").strip()
+    def test_api(
+        self,
+        api_base_url: str,
+        api_model: str,
+        api_key: str = "",
+        timeout_seconds: int = 20,
+        api_provider: str = "OpenAI-compatible",
+    ):
+        provider = _provider(api_provider)
+        base_url = _base_url(provider, api_base_url)
         model = str(api_model or "").strip() or os.getenv("BUFF_AI_API_MODEL", "").strip()
         # Keep the argument for compatibility with old workflows, but never
         # consume a workflow-serialized credential from the API test node.
         key = os.getenv("BUFF_AI_API_KEY", "").strip()
-        endpoint = sanitize_url(OpenAICompatibleClient.build_chat_url(base_url))
-        print(f"[BUFF AI] API 连接测试：{endpoint} | model={model} | stream=false", flush=True)
+        if provider == "Anthropic":
+            endpoint = sanitize_url(base_url.rstrip("/") + "/v1/messages")
+            client = AnthropicClient(base_url, key, model, int(timeout_seconds), max_tokens=1024)
+        else:
+            endpoint = sanitize_url(OpenAICompatibleClient.build_chat_url(base_url))
+            client = OpenAICompatibleClient(base_url, key, model, int(timeout_seconds))
+        print(f"[BUFF AI] API 连接测试：{endpoint} | provider={provider} | model={model} | stream=false", flush=True)
 
-        client = OpenAICompatibleClient(base_url, key, model, int(timeout_seconds))
         try:
             client.chat(
                 "You are a connectivity probe. Reply briefly with BUFF_OK.",
@@ -86,6 +116,7 @@ class BuffAIAPITest:
 
         status = (
             "API 连接成功\n"
+            f"类型: {provider}\n"
             f"地址: {endpoint}\n"
             f"模型: {model}\n"
             "请求模式: stream=false\n"

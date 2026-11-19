@@ -54,6 +54,7 @@ const SIMPLE_EXTRA = new Set([
   "audio_policy",
   "strict_speech_lock",
   "offscreen_dialogue_text",
+  "api_provider",
   "api_base_url",
   "api_model",
   "api_key_env_var",
@@ -104,6 +105,7 @@ const SECTION_WIDGETS = {
     "reference_manifest",
   ]),
   "API 设置": new Set([
+    "api_provider",
     "api_base_url",
     "api_model",
     "api_key_env_var",

@@ -64,6 +64,7 @@ CONFIG_FIELDS = (
     "audio_policy",
     "strict_speech_lock",
     "temperature",
+    "api_provider",
     "api_model",
 )
 

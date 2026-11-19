@@ -6,7 +6,7 @@ A ComfyUI custom node that turns a short idea, optional reference images, and us
 
 ## 1. Project Overview
 
-The node uses an OpenAI-compatible Chat Completions language-model endpoint to plan and refine prompts. It does not call video-generation provider APIs. The `target_model` setting adapts prompt structure for the selected video model.
+The node uses a language-model endpoint to plan and refine prompts: any OpenAI-compatible Chat Completions endpoint, or the Claude API directly (`api_provider = Anthropic`, which needs `pip install anthropic`). It does not call video-generation provider APIs. The `target_model` setting adapts prompt structure for the selected video model.
 
 The package version in `VERSION` and the registered ComfyUI display name for the main node are **3.2.1**.
 
