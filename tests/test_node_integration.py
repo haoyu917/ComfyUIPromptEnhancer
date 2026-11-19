@@ -120,7 +120,8 @@ def test_preflight_validation_rejects_missing_or_invalid_api_settings(monkeypatc
     assert "模型未填写" in msg
 
     msg = BuffAIDirectorEnhancer.VALIDATE_INPUTS("剧情", "http://127.0.0.1:8317/v1", "gpt-test", "")
-    assert "API Key 未填写" in msg
+    assert "API Key 未找到" in msg
+    assert "BUFF_AI_API_KEY" in msg
 
     assert BuffAIDirectorEnhancer.VALIDATE_INPUTS(
         "剧情", "http://127.0.0.1:8317/v1", "gpt-test", "secret"
@@ -322,16 +323,32 @@ def test_v23_style_call_without_new_optional_arguments_remains_valid():
 
 
 def test_package_import_path_works_like_comfyui_package_loading():
-    import importlib
+    """Load the repository as a package the same way ComfyUI loads custom nodes.
+
+    ComfyUI imports a custom-node folder through its ``__init__.py`` with the
+    folder as the package search location, so relative imports must work
+    regardless of what the checkout directory is called.
+    """
+    import importlib.util
     import sys
     from pathlib import Path
 
-    package_parent = Path(__file__).resolve().parents[2]
-    if str(package_parent) not in sys.path:
-        sys.path.insert(0, str(package_parent))
-    package = importlib.import_module("buff_ai_director_enhancer")
-    assert "BUFF_AIDirectorPromptEnhancer" in package.NODE_CLASS_MAPPINGS
-    assert "BUFF_AITextPreview" in package.NODE_CLASS_MAPPINGS
+    root = Path(__file__).resolve().parents[1]
+    name = "buff_ai_director_enhancer_pkg_test"
+    spec = importlib.util.spec_from_file_location(
+        name, root / "__init__.py", submodule_search_locations=[str(root)]
+    )
+    package = importlib.util.module_from_spec(spec)
+    sys.modules[name] = package
+    try:
+        spec.loader.exec_module(package)
+        assert "BUFF_AIDirectorPromptEnhancer" in package.NODE_CLASS_MAPPINGS
+        assert "BUFF_AITextPreview" in package.NODE_CLASS_MAPPINGS
+        assert "BUFF_AIAPITest" in package.NODE_CLASS_MAPPINGS
+        assert package.WEB_DIRECTORY == "./js"
+    finally:
+        for key in [key for key in sys.modules if key == name or key.startswith(name + ".")]:
+            del sys.modules[key]
 
 
 def test_api_prompt_includes_generation_mode_and_enabled_model_specific_guidance():
