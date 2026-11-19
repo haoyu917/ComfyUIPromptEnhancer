@@ -242,6 +242,15 @@ Found under Professional mode → API settings. Records the configuration and ou
 
 `research_tag` is a free label, for example an experiment ID or benchmark prompt ID.
 
+When logging is on, each record also carries `metrics` (automatic quality measurements). Note that the node repairs model output after it arrives (padding or truncating shots, reinserting omitted dialogue, restoring keywords, canonicalizing @entity names), so the final prompt always looks compliant. `metrics` therefore scores the model's **raw response before repair**, measuring how well a given module configuration made the model follow instructions:
+
+- Structure: whether the JSON was valid; the fraction of top-level and per-shot fields required by the active modules that were filled (coverage), and which were missing.
+- Lock compliance: whether every user dialogue line appeared, verbatim and only once; whether lines outside the whitelist were invented (a violation only under strict speech policies); whether blank keywords stayed blank; whether locked @entities appear as full `@name` tokens.
+- Shot count: must match exactly when the user locked a shot plan; otherwise the recommended count is advisory and only the node's safe maximum is checked.
+- Quality mode: the review response is scored separately, together with `quality_change_ratio`, how much the shots changed during review.
+
+`acceptable` is the derived pass label: no lock violations, and field coverage and entity-token rate of at least 0.8. The thresholds are stored in the record and every raw measurement is kept, so the label can be recomputed later with different thresholds. Metrics are computed only when logging is on, so normal use is not slowed down.
+
 Records are appended as one JSON line per run to `research_logs/runs.jsonl` inside the plugin folder (ignored by git). To change the location, set `BUFF_AI_RESEARCH_LOG_DIR` in the ComfyUI process environment; a workflow cannot choose the location, so an imported workflow cannot write files elsewhere on your machine. Records never contain the API key, API base URL, or trusted-host list. A write failure only prints a console warning and never affects prompt generation. Runs that fail on an input error before any request is made (for example non-sequential shot-plan numbers) are not recorded.
 
 ---

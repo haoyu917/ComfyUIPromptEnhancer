@@ -51,6 +51,8 @@ try:
     from .shot_planner import ShotPlanError, ShotPlanLock, parse_shot_plan
     from .storyboard import normalize_storyboard
     from .run_logger import RESEARCH_LOG_LEVELS, RunRecorder
+    from .quality_metrics import build_run_metrics
+    from .storyboard import _safe_shot_count
 except ImportError:  # Standalone test fallback.
     from api_client import (
         APIClientError,
@@ -92,6 +94,8 @@ except ImportError:  # Standalone test fallback.
     from shot_planner import ShotPlanError, ShotPlanLock, parse_shot_plan
     from storyboard import normalize_storyboard
     from run_logger import RESEARCH_LOG_LEVELS, RunRecorder
+    from quality_metrics import build_run_metrics
+    from storyboard import _safe_shot_count
 
 
 class ContainsAnyDict(dict):
@@ -612,6 +616,30 @@ class BuffAIDirectorEnhancer:
                 locked_times=shot_lock.has_locked_times,
                 desired_shots=desired_shots,
             )
+
+            strict_speech = bool(config["strict_speech_lock"]) or config["audio_policy"] != "Full Auto Audio"
+            metric_context = dict(
+                schema_text=module_schema,
+                # Under SFX Only no spoken line is allowed, so every returned line counts as invented.
+                dialogue_entries=() if config["audio_policy"] == "SFX Only" else dialogue_entries,
+                entities=entity_registry,
+                user_keywords=str(inputs.get("keywords", "") or ""),
+                target_shots=desired_shots,
+                shot_count_locked=bool(shot_lock.shot_count),
+                safe_max_shots=1 if shot_mode == "Single Shot" else _safe_shot_count(total_duration),
+            )
+            first_raw: Optional[Dict[str, Any]] = None
+
+            def record_metrics(**extra: Any) -> None:
+                if not recorder.enabled:
+                    return
+                try:
+                    recorder.set_metrics(
+                        build_run_metrics(first=first_raw, strict_speech=strict_speech, **metric_context, **extra)
+                    )
+                except Exception as metric_exc:  # Metrics must never break generation.
+                    print(f"[BUFF AI] 质量指标计算失败（不影响提示词生成）：{type(metric_exc).__name__}", flush=True)
+
             client = self._make_client(config)
             user_content = build_multimodal_content(user_prompt, references)
 
@@ -661,7 +689,10 @@ class BuffAIDirectorEnhancer:
                 json_ok=bool(first),
             )
             stage = "parse_first_response"
+            if recorder.enabled and first:
+                first_raw = copy.deepcopy(first)
             if not first:
+                record_metrics()
                 raise RuntimeError("[BUFF AI] AI returned invalid JSON. Lower temperature or use a stronger JSON-capable model.")
 
             first = self._apply_user_top_level_locks(first, inputs, ref_summary, config)
@@ -688,6 +719,8 @@ class BuffAIDirectorEnhancer:
             if mode != "Quality":
                 self._report_progress(progress, 5, progress_total, "分镜整理完成，输出提示词")
 
+            pre_quality_storyboard = storyboard
+            second = None
             if mode == "Quality":
                 self._report_progress(progress, 5, progress_total, "Quality 模式：开始第二次专业审核请求")
                 quality_system = system_prompt + (
@@ -778,11 +811,20 @@ class BuffAIDirectorEnhancer:
             )
             if mode == "Quality":
                 self._report_progress(progress, 7, progress_total, "完成：提示词已生成")
+            if mode == "Quality":
+                record_metrics(
+                    quality=second,
+                    quality_attempted=True,
+                    pre_quality_storyboard=pre_quality_storyboard,
+                    post_quality_storyboard=storyboard,
+                )
+            else:
+                record_metrics()
             recorder.succeed(
                 storyboard=storyboard,
                 enhanced_prompt=enhanced_prompt,
                 shot_prompts=shot_prompts,
-                quality_applied=bool(mode == "Quality" and second),
+                quality_applied=bool(second),
             )
             print(f"[BUFF AI] 完成：shots={len(storyboard.get('shots', []))}，输出提示词。", flush=True)
             return enhanced_prompt, shot_prompts, storyboard_json, director_summary

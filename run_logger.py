@@ -208,6 +208,11 @@ class RunRecorder:
             call["error_type"] = type(error).__name__
         self.calls.append(call)
 
+    def set_metrics(self, metrics: Mapping[str, Any]) -> None:
+        if not self.enabled:
+            return
+        self.record["metrics"] = dict(metrics)
+
     def succeed(
         self,
         *,
