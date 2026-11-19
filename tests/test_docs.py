@@ -81,6 +81,10 @@ def test_readme_and_third_party_attribution_are_present():
     assert "USER_MANUAL_ZH.md" in readme
     assert "USER_MANUAL_EN.md" in readme
     assert "Cinematic Director Skill v2.0" in notices
+    # The research code implements, and its tests quote examples from, this article.
+    assert "Three-way decision with granular rough sets" in notices
+    assert "10.1016/j.asoc.2025.113344" in notices
+    assert "CC BY-NC-ND 4.0" in notices
     assert "wangzhang-wu" in notices
     assert "MIT" in notices
     assert "Copyright (c) 2026 wangzhang-wu" in license_text
